@@ -23,7 +23,7 @@ jobs:
         java-version: '21'
         distribution: 'zulu'
 
-    # 3. تحديث بيئة Node.js (تمت الترقية إلى v22 بناءً على طلبك لضمان أعلى توافقية مع Capacitor 6)
+    # 3. تحديث بيئة Node.js (تمت الترقية إلى v22 لضمان أعلى توافقية مع Capacitor 6)
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -85,31 +85,59 @@ jobs:
         rm -f android/app/src/main/res/values/ic_launcher_background.xml
         rm -f android/app/src/main/res/drawable/ic_launcher_background.xml
 
-    # 8. خطوة التطهير الحاسمة: فحص وترميم بايتات كافة صور الـ PNG التالفة تلقائياً عبر السيرفر
-    - name: Auto-Sanitize and Repair Corrupted PNG Asset Headers
+    # 8. الخطوة البديلة المحدثة: تطبيق آلية "الحشو الذكي" على ملف icon.png لمنع التكبير وقص أطراف الشعار الهندسي (الهوية الرسمية)
+    - name: Process, Pad, and Deploy Main Branded Icon
       run: |
-        echo "Installing ImageMagick processing tools..."
+        echo "Installing ImageMagick system utilities..."
         sudo apt-get update && sudo apt-get install -y imagemagick
         
-        echo "Starting recursive scan and bitwise reconstruction for all PNG resources..."
-        find android/app/src/main/res/ -name "*.png" | while read -r img; do
-          if [ -f "$img" ]; then
-            # محاولة قراءة وتطهير الملف وإعادة صياغته برمجياً للتخلص من التلف الداخلي
-            convert "$img" -strip png24:reconstructed_asset.png 2>/dev/null || true
-            
-            if [ -s reconstructed_asset.png ]; then
-              rm -f "$img"
-              mv reconstructed_asset.png "$img"
-              chmod 664 "$img"
-            else
-              echo "Severe corruption detected on $img. Enforcing baseline placeholder to secure build..."
-              rm -f reconstructed_asset.png
-              convert -size 512x512 xc:"#1B5E20" -strip png24:"$img"
-            fi
+        # التحقق الصارم من وجود ملف الأيقونة الذي قمت بتحويله ورفعه في المجلد الرئيسي
+        if [ -f "icon.png" ]; then
+          echo "Main icon.png detected successfully in the root directory."
+          
+          # أخذ شعارك الأصلي بدقة 1024x1024، وتصغيره ليحتل 75% من المساحة في المنتصف،
+          # مع إحاطته بحشو (Padding) أبيض نقي بمقاس معيارى 512x512 لمنع قصه بواسطة قناع أندرويد التكيفي.
+          convert icon.png -resize 384x384 -gravity center -background "#FFFFFF" -extent 512x512 -strip png24:master_clean.png
+        else
+          echo "Critical Error: icon.png not found in the root directory!"
+          exit 1
+        fi
+
+        # دالة تجميعية لتوزيع ونشر الأيقونة بالمقاسات والمسافات الجديدة لمنع التكبير
+        deploy_icon_dimension() {
+          local folder_name="$1"
+          local dimension="$2"
+          local target_dir="android/app/src/main/res/$folder_name"
+          
+          mkdir -p "$target_dir"
+          echo "Injecting padded binary icons into $folder_name (${dimension}x${dimension})..."
+          
+          convert master_clean.png -resize ${dimension}x${dimension} -strip png24:"$target_dir/ic_launcher.png"
+          convert master_clean.png -resize ${dimension}x${dimension} -strip png24:"$target_dir/ic_launcher_round.png"
+          convert master_clean.png -resize ${dimension}x${dimension} -strip png24:"$target_dir/ic_launcher_foreground.png"
+          
+          chmod 664 "$target_dir"/ic_launcher*.png
+        }
+
+        # تعميم ونشر الأيقونة الرسمية على الكثافات الخمس المعتمدة لجميع أجهزة أندرويد
+        deploy_icon_dimension "mipmap-mdpi" 48
+        deploy_icon_dimension "mipmap-hdpi" 72
+        deploy_icon_dimension "mipmap-xhdpi" 96
+        deploy_icon_dimension "mipmap-xxhdpi" 144
+        deploy_icon_dimension "mipmap-xxxhdpi" 192
+        
+        # ربط الشاشة الترحيبية (Splash Screen) بهويتك البصرية الحقيقية المستخرجة من الشعار
+        find android/app/src/main/res/ -name "splash.png" 2>/dev/null | while read -r splash; do
+          if [ -f "$splash" ]; then
+            convert -size 1080x1920 xc:"#FFFFFF" -gravity center -draw "image over 0,-150 300,300 'master_clean.png'" -fill "#2E7D32" -font "DejaVu-Sans-Bold" -pointsize 50 -gravity center -draw "text 0,200 'زون للخدمات الزراعية'" -strip png24:temp_splash.png
+            rm -f "$splash"
+            mkdir -p "$(dirname "$splash")"
+            mv temp_splash.png "$splash"
+            chmod 664 "$splash"
           fi
         done
-        
-        # إيقاف ميزة سحق الـ PNGs الداخلية في Gradle لمنع التداخل مع الصور المعدلة
+
+        rm -f master_clean.png
         echo "android.crunchPngs=false" >> android/gradle.properties
 
     # 9. إعداد أداة Gradle المركزية بالنسخة 8.4 المستقرة والموصى بها
@@ -133,7 +161,7 @@ jobs:
       run: gradle bundleRelease
       working-directory: ./android
 
-    # 13. توليد مفتاح التوقيع سحابياً ببياناتك ومستعارك الصحيح (zone-key) وكلمة سرك (zone2026) وتوقيع الحزمة
+    # 13. توليد مفتاح التوقيع سحابياً وتوقيع الحزمة (zone-key / zone2026)
     - name: Auto-Generate Keystore and Sign AAB
       run: |
         echo "Generating secure release keystore on the fly..."

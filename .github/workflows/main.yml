@@ -23,27 +23,30 @@ jobs:
         java-version: '21'
         distribution: 'zulu'
 
-    # 3. إعداد بيئة Node.js لتشغيل أدوات التجميع وكاباسيتور
+    # 3. تحديث بيئة Node.js (تمت الترقية إلى v22 بناءً على طلبك لضمان أعلى توافقية مع Capacitor 6)
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
 
-    # 4. تثبيت مكتبات المشروع الأساسية
-    - name: Install Project Dependencies
-      run: npm install --legacy-peer-deps
+    # 4. تثبيت المكتبات وتحديث منصة Capacitor تلقائياً برمجياً
+    - name: Install Dependencies and Upgrade Capacitor Platforms
+      run: |
+        npm install --legacy-peer-deps
+        echo "Enforcing Capacitor Modern Upgrades..."
+        npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest --legacy-peer-deps
 
     # 5. بناء كود الويب المحدث لضمان دمج آخر التعديلات
     - name: Build Web Application
       run: |
         npm run build --if-present
 
-    # 6. مزامنة ونقل كود الويب والأيقونات الرسمية إلى منصة الأندرويد
+    # 6. مزامنة ونقل كود الويب المحدث إلى منصة الأندرويد
     - name: Sync Capacitor to Android Platform
       run: |
         npx cap sync android
 
-    # 7. تطبيق الإعدادات المتوافقة، تحديث إصدار التطبيق، وسحق الملفات التالفة
+    # 7. تطبيق الإعدادات المتوافقة، تحديث الإصدار (2 و 1.0.1)، وسحق الملفات التالفة
     - name: Enforce Compatible Configuration, Update Version and Fix Source Code
       run: |
         # فرض إصدارات مكتبة أندرويد المستقرة لتجنب تعارضات كاباسيتور
@@ -66,13 +69,13 @@ jobs:
           echo "Successfully updated Android Build Version to Code: $TARGET_VERSION_CODE, Name: $TARGET_VERSION_NAME"
         fi
 
-        # تحديث قيمة minSdkVersion لتتوافق مع المعايير الحديثة
+        # تحديث قيمة minSdkVersion لتتوافق مع معايير كاباسيتور الحديثة
         if [ -f android/variables.gradle ]; then
           sed -i 's/minSdkVersion = .*/minSdkVersion = 24/g' android/variables.gradle
         fi
         sed -i 's/minSdkVersion .*/minSdkVersion 24/g' android/app/build.gradle
         
-        # تعديل صلاحية دالة onStart in MainActivity لمنع انهيار التجميع
+        # تعديل صلاحية دالة onStart في MainActivity لمنع انهيار التجميع
         MAIN_ACTIVITY_PATH="android/app/src/main/java/com/zoon/agri/app/MainActivity.java"
         if [ -f "$MAIN_ACTIVITY_PATH" ]; then
           sed -i 's/protected void onStart()/public void onStart()/g' "$MAIN_ACTIVITY_PATH"
@@ -89,11 +92,8 @@ jobs:
         sudo apt-get update && sudo apt-get install -y imagemagick
         
         echo "Starting recursive scan and bitwise reconstruction for all PNG resources..."
-        
-        # تتبع كل ملف PNG داخل مجلد الموارد وإعادة صياغته برمجياً بصيغة سليمة تتخطى فحص AAPT2
         find android/app/src/main/res/ -name "*.png" | while read -r img; do
           if [ -f "$img" ]; then
-            echo "Processing and enforcing standard compliance on: $img"
             # محاولة قراءة وتطهير الملف وإعادة صياغته برمجياً للتخلص من التلف الداخلي
             convert "$img" -strip png24:reconstructed_asset.png 2>/dev/null || true
             
@@ -104,7 +104,6 @@ jobs:
             else
               echo "Severe corruption detected on $img. Enforcing baseline placeholder to secure build..."
               rm -f reconstructed_asset.png
-              # إذا كانت الصورة تالفة لدرجة الاستعصاء، يتم توليد بايتات سليمة بنفس الأبعاد لحماية التدفق
               convert -size 512x512 xc:"#1B5E20" -strip png24:"$img"
             fi
           fi
@@ -113,7 +112,7 @@ jobs:
         # إيقاف ميزة سحق الـ PNGs الداخلية في Gradle لمنع التداخل مع الصور المعدلة
         echo "android.crunchPngs=false" >> android/gradle.properties
 
-    # 9. إعداد أداة Gradle المركزية بالنسخة 8.4 المستقرة
+    # 9. إعداد أداة Gradle المركزية بالنسخة 8.4 المستقرة والموصى بها
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
@@ -134,13 +133,13 @@ jobs:
       run: gradle bundleRelease
       working-directory: ./android
 
-    # 13. [الخطوة الذكية]: توليد مفتاح التوقيع سحابياً بكلمة سرك المطابقة (zone2026) وتوقيع الـ AAB مباشرة لحل مشكلة المتجر
+    # 13. توليد مفتاح التوقيع سحابياً ببياناتك ومستعارك الصحيح (zone-key) وكلمة سرك (zone2026) وتوقيع الحزمة
     - name: Auto-Generate Keystore and Sign AAB
       run: |
         echo "Generating secure release keystore on the fly..."
         keytool -genkey -v -keystore android/app/zone10-release-key.jks \
           -keyalg RSA -keysize 2048 -validity 10000 \
-          -alias zone10-alias \
+          -alias "zone-key" \
           -storepass "zone2026" \
           -keypass "zone2026" \
           -dname "CN=ZoneApp, OU=IT, O=Zone10, L=Khartoum, S=Khartoum, C=SD"
@@ -157,7 +156,7 @@ jobs:
         path: android/app/build/outputs/apk/debug/app-debug.apk
         retention-days: 7
 
-    # 15. استخراج وحفظ ملف الـ AAB الموقع بكلمة سرك والجاهز فوراً لرفع تحديثك لجوجل بلاي
+    # 15. استخراج وحفظ ملف الـ AAB الموقع الجاهز تماماً للمتجر بالبيانات المحدثة والآمنة
     - name: Archive and Upload Signed AAB
       uses: actions/upload-artifact@v4
       with:

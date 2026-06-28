@@ -43,8 +43,8 @@ jobs:
       run: |
         npx cap sync android
 
-    # 7. تطبيق الإعدادات المتوافقة وسحق الملفات المتكررة والتالفة تلقائياً
-    - name: Enforce Compatible Configuration and Fix Source Code
+    # 7. تطبيق الإعدادات المتوافقة، تحديث إصدار التطبيق (رقم الكود والاسم)، وسحق الملفات التالفة
+    - name: Enforce Compatible Configuration, Update Version and Fix Source Code
       run: |
         # فرض إصدارات مكتبة أندرويد المستقرة لتجنب تعارضات كاباسيتور
         cat << 'EOF' >> android/build.gradle
@@ -56,6 +56,17 @@ jobs:
         }
         EOF
         
+        # [تعديل جوجل بلاي المباشر]: تحديث الـ versionCode والـ versionName تلقائياً لتخطي قيود الرفع
+        # يمكنك تغيير الرقم 2 إلى 3 أو 4 مستقبلاً، و 1.0.1 إلى أي اسم إصدار تريده هنا مباشرة:
+        TARGET_VERSION_CODE="2"
+        TARGET_VERSION_NAME="1.0.1"
+
+        if [ -f android/app/build.gradle ]; then
+          sed -i "s/versionCode .*/versionCode $TARGET_VERSION_CODE/g" android/app/build.gradle
+          sed -i "s/versionName .*/versionName \"$TARGET_VERSION_NAME\"/g" android/app/build.gradle
+          echo "Successfully updated Android Build Version to Code: $TARGET_VERSION_CODE, Name: $TARGET_VERSION_NAME"
+        fi
+
         # تحديث قيمة minSdkVersion لتتوافق مع المعايير الحديثة
         if [ -f android/variables.gradle ]; then
           sed -i 's/minSdkVersion = .*/minSdkVersion = 24/g' android/variables.gradle
@@ -80,7 +91,7 @@ jobs:
         
         echo "Starting recursive scan and bitwise reconstruction for all PNG resources..."
         
-        # تتبع كل ملف PNG داخل مجلد الموارد وإعادة صياغته برمجياً بصيغة نيجيرية سليمة تتخطى فحص AAPT2
+        # تتبع كل ملف PNG داخل مجلد الموارد وإعادة صياغته برمجياً بصيغة سليمة تتخطى فحص AAPT2
         find android/app/src/main/res/ -name "*.png" | while read -r img; do
           if [ -f "$img" ]; then
             echo "Processing and enforcing standard compliance on: $img"
@@ -109,7 +120,7 @@ jobs:
       with:
         gradle-version: '8.4'
 
-    # 10. تنظيف الكاش القديم بالكامل لضمان بناء التطبيق من الصفر بملفات نهارية سليمة
+    # 10. تنظيف الكاش القديم بالكامل لضمان بناء التطبيق من الصفر بملفات سليمة
     - name: Clean Android Build Cache
       run: gradle clean
       working-directory: ./android
